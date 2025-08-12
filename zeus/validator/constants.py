@@ -11,16 +11,18 @@ FORWARD_DELAY_SECONDS = 90
 
 # how many miners proxy queries
 PROXY_QUERY_K = 10
+# after how many percent of above it yields results
+PROXY_CUTOFF_PERCENT = 0.6
 
 # wandb website refuses to update logs after roughly 100k, so reset run if this happens
 WANDB_MAX_LOGS = 95_000
 
 # the variables miners are tested on, with their respective sampling weight
 ERA5_DATA_VARS: Dict[str, float] = {
-    "2m_temperature": 0.3,
-    "total_precipitation": 0.4,
-    "100m_u_component_of_wind": 0.15,
-    "100m_v_component_of_wind": 0.15,
+    "2m_temperature": 0.25,
+    "total_precipitation": 0.25,
+    "100m_u_component_of_wind": 0.25,
+    "100m_v_component_of_wind": 0.25,
 }
 ERA5_LATITUDE_RANGE: Tuple[float, float] = (-90.0, 90.0)
 ERA5_LONGITUDE_RANGE: Tuple[float, float] = (-180.0, 179.75)  # real ERA5 ranges
@@ -32,8 +34,11 @@ ERA5_AREA_SAMPLE_RANGE: Tuple[float, float] = (4, 16)
 # ------------------------------------------------------
 # 1.0 would imply no difficulty scaling, should be >= 1.
 REWARD_DIFFICULTY_SCALER = 3.0
-
-REWARD_IMPROVEMENT_WEIGHT = 0.5 # 50% of emission for improving SOTA
+# 50% of emission for improving SOTA
+REWARD_IMPROVEMENT_WEIGHT = 0.5
+# when curving scores, worst score is capped at MAX_STUPIDITY * best_score if applicable
+# to prevent reward curve from being shifted by really bad outlier
+MAX_STUPIDITY = 3.0
 
 # RMSE improvement over OpenMeteo only counts if more than this
 REWARD_IMPROVEMENT_MIN_DELTA: Dict[str, float] = {
