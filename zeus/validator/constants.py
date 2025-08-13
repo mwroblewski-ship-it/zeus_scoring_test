@@ -27,7 +27,7 @@ ERA5_DATA_VARS: Dict[str, float] = {
 ERA5_LATITUDE_RANGE: Tuple[float, float] = (-90.0, 90.0)
 ERA5_LONGITUDE_RANGE: Tuple[float, float] = (-180.0, 179.75)  # real ERA5 ranges
 # how many datapoints we want. The resolution is 0.25 degrees, so 4 means 1 degree.
-ERA5_AREA_SAMPLE_RANGE: Tuple[float, float] = (4, 16)
+ERA5_AREA_SAMPLE_RANGE: Tuple[float, float] = (2, 4)
 
 # ------------------------------------------------------
 # ------------------ Reward Constants -----------------
@@ -55,7 +55,7 @@ ERA5_CACHE_DIR: Path = Path.home() / ".cache" / "zeus" / "era5"
 DATABASE_LOCATION: Path = Path.home() / ".cache" / "zeus" / "challenges.db"
 COPERNICUS_ERA5_URL: str = "https://cds.climate.copernicus.eu/api"
 
-LIVE_START_OFFSET_RANGE: Tuple[int, int] = (-119, 168)  # 4 days and 23 hours ago <---> until 7 days in future
+LIVE_START_OFFSET_RANGE: Tuple[int, int] = (-240, -168)  # 4 days and 23 hours ago <---> until 7 days in future
 LIVE_UNIFORM_START_OFFSET_PROB: float = 0.1
 LIVE_HOURS_PREDICT_RANGE: Tuple[float, float] = (1, 25) # how many hours ahead we want to predict.
 
@@ -65,7 +65,7 @@ LIVE_START_SAMPLE_STD: float = 35
 # ------------------------------------------------------
 # ------------ OpenMeteo (SOTA comparisons) ------------
 # ------------------------------------------------------
-OPEN_METEO_URL: str = "https://customer-api.open-meteo.com/v1/forecast"
+OPEN_METEO_URL: str = "https://api.open-meteo.com/v1/forecast"
 
 # ------------------------------------------------------
 # ---------- Historic prediction (UNUSED) --------------

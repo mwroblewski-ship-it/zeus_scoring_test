@@ -26,9 +26,9 @@ if [ -f "miner.env" ]; then
 else
     cat > miner.env << 'EOL'
 # Subtensor Network Configuration:
-NETUID=                                        # Network UID options: 18, 301
-SUBTENSOR_NETWORK=                             # Networks: finney, test, local
-SUBTENSOR_CHAIN_ENDPOINT=
+NETUID=301
+SUBTENSOR_NETWORK=test
+SUBTENSOR_CHAIN_ENDPOINT=wss://test.finney.opentensor.ai:443/
                                                # Endpoints:
                                                # - wss://entrypoint-finney.opentensor.ai:443
                                                # - wss://test.finney.opentensor.ai:443/
@@ -49,9 +49,9 @@ if [ -f "validator.env" ]; then
     echo "File 'validator.env' already exists. Skipping creation."
 else
     cat > validator.env << 'EOL'
-NETUID=                                         # Netuids: 18 (for finney), 301 (for testnet)
-SUBTENSOR_NETWORK=                              # Networks: finney, test, local
-SUBTENSOR_CHAIN_ENDPOINT=
+NETUID=301
+SUBTENSOR_NETWORK=test
+SUBTENSOR_CHAIN_ENDPOINT=wss://test.finney.opentensor.ai:443/
                                                 # Endpoints:
                                                 # - wss://entrypoint-finney.opentensor.ai:443
                                                 # - wss://test.finney.opentensor.ai:443/
@@ -65,8 +65,8 @@ AXON_PORT=
 PROXY_PORT=
 
 # API Keys:
-WANDB_API_KEY=                  # https://wandb.ai/authorize
-CDS_API_KEY=                    # https://github.com/Orpheus-AI/Zeus/blob/main/docs/Validating.md#ecmwf
+WANDB_API_KEY=0593dbd6e2d67a577fa9a826cf061660ba9aaf27
+CDS_API_KEY=442cb6c9-a016-4f37-9500-b17aa9d760ba
 OPEN_METEO_API_KEY=             # https://open-meteo.com/en/pricing#plans (Cheapest one suffices)
 PROXY_API_KEY=                  # Your Proxy API Key, you can generate it yourself
 
