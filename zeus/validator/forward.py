@@ -463,7 +463,8 @@ def log_final_era5_results(sample: Era5Sample, baseline: Optional[torch.Tensor],
             
             bt.logging.info(f"   {rank_symbol} UID {miner.uid}:")
             bt.logging.info(f"      Final Reward: {miner.reward:.6f}")
-            bt.logging.info(f"      RMSE vs ERA5: {miner.rmse:.4f}")
+            if miner.rmse is not None:
+                bt.logging.info(f"      RMSE vs ERA5: {miner.rmse:.4f}")
             
             if hasattr(miner, 'baseline_improvement') and miner.baseline_improvement is not None:
                 improvement_status = "🎉" if miner.baseline_improvement > 0 else "📊"
