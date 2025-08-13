@@ -4,6 +4,7 @@ import time
 import torch
 import pandas as pd
 import json
+import bittensor as bt
 
 from zeus.data.loaders.era5_cds import Era5CDSLoader
 from zeus.validator.constants import DATABASE_LOCATION
@@ -81,6 +82,25 @@ class ResponseDatabase:
         """
         challenge_uid = self._insert_challenge(sample)
         self._insert_responses(challenge_uid, miner_hotkeys, predictions)
+        
+        # 🔥 NOWE: Szczegółowe logowanie zapisywania do bazy
+        bt.logging.info(f"💾 ZAPISANO CHALLENGE DO BAZY DANYCH")
+        bt.logging.info(f"   Challenge UID: {challenge_uid}")
+        bt.logging.info(f"   Variable: {sample.variable}")
+        bt.logging.info(f"   Miners stored: {len(miner_hotkeys)}")
+        bt.logging.info(f"   Baseline shape: {list(sample.output_data.shape)}")
+        
+        # Pokaż kiedy challenge będzie scored
+        end_time = pd.Timestamp(sample.end_timestamp, unit='s')
+        era5_available_time = end_time + pd.Timedelta(days=5)  # ERA5 ma ~5 dni opóźnienia
+        now = pd.Timestamp.now()
+        time_to_scoring = era5_available_time - now
+        
+        if time_to_scoring.total_seconds() > 0:
+            bt.logging.info(f"   ⏱️  ERA5 ground truth available in: {time_to_scoring}")
+            bt.logging.info(f"   📅 Expected scoring time: {era5_available_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        else:
+            bt.logging.info(f"   ✅ ERA5 ground truth should already be available!")
 
     def _insert_challenge(self, sample: Era5Sample) -> int:
         """
@@ -124,7 +144,6 @@ class ResponseDatabase:
             # prepare data for insertion
             for miner_hotkey, prediction in zip(miner_hotkeys, predictions):
                 prediction_json = json.dumps(prediction.tolist())
-
                 data_to_insert.append((miner_hotkey, challenge_uid, prediction_json))
 
             cursor.executemany(
@@ -158,6 +177,8 @@ class ResponseDatabase:
             )
             challenges = cursor.fetchall()
 
+        bt.logging.info(f"🔍 Found {len(challenges)} challenges ready for scoring")
+
         for i, challenge in enumerate(challenges):
             # load the sample
             (
@@ -174,6 +195,11 @@ class ResponseDatabase:
                 variable,
             ) = challenge
 
+            bt.logging.info(f"📋 Processing challenge {i+1}/{len(challenges)} (UID: {challenge_uid})")
+            bt.logging.info(f"   Variable: {variable}")
+            bt.logging.info(f"   Time: {pd.Timestamp(start_timestamp, unit='s')} -> {pd.Timestamp(end_timestamp, unit='s')}")
+            bt.logging.info(f"   Location: lat[{lat_start:.2f}, {lat_end:.2f}], lon[{lon_start:.2f}, {lon_end:.2f}]")
+
             sample = Era5Sample(
                 variable=variable,
                 query_timestamp=inserted_at,
@@ -185,17 +211,36 @@ class ResponseDatabase:
                 lon_end=lon_end,
                 predict_hours=hours_to_predict,
             )
+            
             # load the correct output and set it if it is available
+            bt.logging.info(f"🌍 Fetching ERA5 ground truth...")
             output = self.cds_loader.get_output(sample)
             sample.output_data = output
 
             if output is None or output.shape[0] != hours_to_predict:
+                days_old = (latest_available - end_timestamp) / (24 * 3600)
+                bt.logging.warning(f"❌ Cannot get ERA5 ground truth (challenge {days_old:.1f} days old)")
+                
                 if end_timestamp < (latest_available - pd.Timedelta(days=3).total_seconds()):
                     # challenge is unscore-able, delete it
+                    bt.logging.info(f"🗑️  Deleting unscorable challenge (too old)")
                     self._delete_challenge(challenge_uid)
                 continue
+            
+            bt.logging.success(f"✅ ERA5 ground truth loaded: shape {list(output.shape)}")
+            
+            # Pokaż statystyki ground truth
+            gt_stats = {
+                "mean": output.mean().item(),
+                "std": output.std().item(),
+                "min": output.min().item(),
+                "max": output.max().item()
+            }
+            bt.logging.info(f"📏 ERA5 Ground Truth Stats: mean={gt_stats['mean']:.4f}, std={gt_stats['std']:.4f}, range=[{gt_stats['min']:.4f}, {gt_stats['max']:.4f}]")
         
             baseline = torch.tensor(json.loads(baseline))
+            bt.logging.info(f"🌐 Baseline shape: {list(baseline.shape)}")
+            
             # load the miner predictions
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -212,12 +257,28 @@ class ResponseDatabase:
                     torch.tensor(json.loads(response[2])) for response in responses
                 ]
             
+            bt.logging.info(f"⛏️  Loaded {len(predictions)} miner predictions from database")
+            
+            # Pokaż podstawowe statystyki predykcji przed scoringiem
+            for j, (hotkey, prediction) in enumerate(zip(miner_hotkeys, predictions)):
+                pred_stats = {
+                    "mean": prediction.mean().item(),
+                    "std": prediction.std().item(),
+                    "min": prediction.min().item(),
+                    "max": prediction.max().item()
+                }
+                bt.logging.info(f"   Miner {j+1}: shape={list(prediction.shape)}, mean={pred_stats['mean']:.4f}")
+            
             # don't score while database is open in case there is a metagraph delay.
+            bt.logging.info(f"🎯 Starting final scoring process...")
             score_func(sample, baseline, miner_hotkeys, predictions)
+            
+            bt.logging.success(f"✅ Challenge {challenge_uid} scored and deleted")
             self._delete_challenge(challenge_uid)
 
             # don't score miners too quickly in succession and always wait after last scoring
-            if i > 0:
+            if i < len(challenges) - 1:  # Nie czekaj po ostatnim
+                bt.logging.info(f"⏳ Waiting 4s before next challenge...")
                 time.sleep(4)
 
     def _delete_challenge(self, challenge_uid: int):
