@@ -131,8 +131,12 @@ def log_detailed_comparison(sample: Era5Sample, baseline_data: Optional[torch.Te
             ranking_symbol = "🥇" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else "📊"
             
             bt.logging.info(f"   {ranking_symbol} UID {miner.uid} (Rank {i+1}):")
-            bt.logging.info(f"      RMSE: {miner.rmse:.4f}")
-            bt.logging.info(f"      Reward: {miner.reward:.4f}")
+            if miner.rmse is not None:
+                bt.logging.info(f"      RMSE: {miner.rmse:.4f}")
+                bt.logging.info(f"      Reward: {miner.reward:.4f}")
+            else:
+                bt.logging.info("====== Miner RMSE and Reward is missing")
+            
             bt.logging.info(f"      Stats: mean={miner_stats['mean']:.4f}, std={miner_stats['std']:.4f}")
             
             if hasattr(miner, 'baseline_improvement') and miner.baseline_improvement is not None:
@@ -147,11 +151,12 @@ def log_detailed_comparison(sample: Era5Sample, baseline_data: Optional[torch.Te
         if len(valid_miners_sorted) > 1:
             best_miner = valid_miners_sorted[0]
             worst_miner = valid_miners_sorted[-1]
-            improvement_pct = ((worst_miner.rmse - best_miner.rmse) / worst_miner.rmse) * 100
+            if miner.rmse is not None:
+                improvement_pct = ((worst_miner.rmse - best_miner.rmse) / worst_miner.rmse) * 100
             
-            bt.logging.info(f"🏆 Best vs Worst:")
-            bt.logging.info(f"   Best UID {best_miner.uid}: RMSE {best_miner.rmse:.4f}")
-            bt.logging.info(f"   Worst UID {worst_miner.uid}: RMSE {worst_miner.rmse:.4f}")
+                bt.logging.info(f"🏆 Best vs Worst:")
+                bt.logging.info(f"   Best UID {best_miner.uid}: RMSE {best_miner.rmse:.4f}")
+                bt.logging.info(f"   Worst UID {worst_miner.uid}: RMSE {worst_miner.rmse:.4f}")
             bt.logging.info(f"   Improvement: {improvement_pct:.1f}% better RMSE")
     
     bt.logging.info("=" * 80)

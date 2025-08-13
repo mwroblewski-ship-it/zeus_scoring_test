@@ -32,7 +32,7 @@ class ResponseDatabase:
         """
         if not self.cds_loader.is_ready():
             return False
-        if block - self.last_synced_block > 75:
+        if block - self.last_synced_block > 5:
             self.last_synced_block = block
             return True
         return False
