@@ -32,8 +32,8 @@ class OpenMeteoLoader:
             "latitude": latitudes.tolist(),
             "longitude": longitudes.tolist(),
             "hourly": converter.om_name,
-            "start": start_time.strftime("%Y-%m-%d"),
-            "end": end_time.strftime("%Y-%m-%d")
+            "start_hour": start_time.isoformat(timespec="minutes"),
+            "end_hour": end_time.isoformat(timespec="minutes"),
         }
 
         # Debugowanie URL-a i parametrów

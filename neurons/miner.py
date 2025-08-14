@@ -57,6 +57,33 @@ class Miner(BaseMinerNeuron):
         self.device: torch.device = torch.device(get_device_str())
         self.openmeteo_api = openmeteo_requests.Client()
 
+    def _log_api_request(self, url: str, params: dict):
+        """Loguj szczegóły żądania API"""
+        try:
+            import urllib.parse
+            
+            bt.logging.info(f"🌐 === MINER OPENMETEO API REQUEST ===")
+            bt.logging.info(f"   URL: {url}")
+            bt.logging.info(f"   Method: POST")
+            
+            # Pokaż parametry
+            for key, value in params.items():
+                if isinstance(value, list) and len(value) > 5:
+                    bt.logging.info(f"   {key}: [{value[0]}, {value[1]}, {value[2]}, ...] ({len(value)} total)")
+                else:
+                    bt.logging.info(f"   {key}: {value}")
+            
+            # Stwórz pełny URL dla debugowania (jak GET)
+            query_string = urllib.parse.urlencode(params, doseq=True)
+            full_url = f"{url}?{query_string}"
+            
+            bt.logging.info(f"   Full URL (as GET): {full_url}")
+            bt.logging.info(f"🌐 === END MINER REQUEST ===")
+            
+        except Exception as e:
+            bt.logging.warning(f"Could not log API request details: {e}")
+            bt.logging.info(f"🌐 MINER OPENMETEO API REQUEST: {url}")
+
     async def forward(self, synapse: TimePredictionSynapse) -> TimePredictionSynapse:
         """
         Processes the incoming TimePredictionSynapse for a prediction.
@@ -117,6 +144,9 @@ class Miner(BaseMinerNeuron):
             "start_hour": start_time.isoformat(timespec="minutes"),
             "end_hour": end_time.isoformat(timespec="minutes"),
         }
+        
+        # 🔥 NOWE: Loguj szczegóły API request
+        self._log_api_request("https://api.open-meteo.com/v1/forecast", params)
         
         try:
             responses = self.openmeteo_api.weather_api(
@@ -186,6 +216,11 @@ class Miner(BaseMinerNeuron):
             
         except Exception as e:
             bt.logging.error(f"❌ OpenMeteo API error: {e}")
+            # Detailed error logging
+            bt.logging.error(f"   Exception type: {type(e).__name__}")
+            import traceback
+            bt.logging.error(f"   Traceback: {traceback.format_exc()}")
+            
             # Fallback: zwróć tensor wypełniony średnimi wartościami
             fallback_shape = (synapse.requested_hours, *coordinates.shape[:2])
             
