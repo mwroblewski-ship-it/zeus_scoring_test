@@ -220,7 +220,7 @@ class ResponseDatabase:
                 days_old = (latest_available - end_timestamp) / (24 * 3600)
                 bt.logging.warning(f"❌ Cannot get ERA5 ground truth (challenge {days_old:.1f} days old) - no data returned")
                 
-                if end_timestamp < (latest_available - pd.Timedelta(days=3).total_seconds()):
+                if end_timestamp < (latest_available - pd.Timedelta(days=10).total_seconds()):
                     # challenge is unscore-able, delete it
                     bt.logging.info(f"🗑️  Deleting unscorable challenge (too old)")
                     self._delete_challenge(challenge_uid)

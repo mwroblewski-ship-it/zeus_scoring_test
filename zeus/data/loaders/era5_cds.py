@@ -97,25 +97,18 @@ class Era5CDSLoader(Era5BaseLoader):
         return dataset
 
     def sample_time_range(self) -> Tuple[pd.Timestamp, pd.Timestamp, int]:
-        """
-        Sample random start and end times according to the provided ranges.
-        """
+        # 🔥 TYMCZASOWA POPRAWKA - force historical dates only
         num_predict_hours = np.random.randint(*self.predict_sample_range)
-
-         # see visualisation at Zeus/static/era5_start_offset_distribution.png
-        if np.random.rand() > self.uniform_start_prob:
-            start_offset = min(
-                self.start_offset_range[1], # don't overshoot
-                np.abs(
-                    int(np.random.normal(0, self.start_sample_std))
-                ) + self.start_offset_range[0]
-            )
-        else:
-            start_offset = int(np.random.uniform(*self.start_offset_range))
-
-        start_timestamp = get_today("h") + pd.Timedelta(hours=start_offset)
+        
+        current_time = get_today("h")
+        
+        # Force dates to be at least 6 days in the past (dla bezpieczeństwa)
+        days_back = np.random.randint(6, 30)  # 6-30 dni wstecz
+        start_timestamp = current_time - pd.Timedelta(days=days_back)
         end_timestamp = start_timestamp + pd.Timedelta(hours=num_predict_hours - 1)
-
+        
+        bt.logging.info(f"🕐 FORCED historical sampling: {start_timestamp} -> {end_timestamp} ({days_back} days ago)")
+        
         return start_timestamp, end_timestamp, num_predict_hours
 
     def get_sample(self) -> Era5Sample:

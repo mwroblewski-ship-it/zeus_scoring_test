@@ -1,0 +1,45 @@
+{
+  "timestamp": 1755176412,
+  "sample_info": {
+    "variable": "100m_u_component_of_wind",
+    "start_timestamp": 1754560800.0,
+    "end_timestamp": 1754575200.0,
+    "predict_hours": 5,
+    "bbox": [
+      -89.25,
+      -88.75,
+      -18.5,
+      -17.75
+    ],
+    "start_time_str": "2025-08-07 10:00:00",
+    "end_time_str": "2025-08-07 14:00:00",
+    "bbox_str": "[lat_start, lat_end, lon_start, lon_end]=[-89.25, -88.75, -18.50, -17.75]"
+  },
+  "validation_results": {
+    "ground_truth_available": true,
+    "baseline_vs_ground_truth_rmse": 1.1698285341262817,
+    "miners_vs_ground_truth": {
+      "117": 1.1698285341262817
+    },
+    "miners_vs_baseline": {
+      "117": 0.0
+    },
+    "best_miner_improvement": 0.0
+  },
+  "miners_data": [
+    {
+      "uid": 117,
+      "hotkey": "5HCLPRn7zVNq8REdjy1WNofLSC6p2sPiW1or6kCRNUneGjF2",
+      "reward": null,
+      "rmse": null,
+      "shape_penalty": null,
+      "baseline_improvement": null,
+      "prediction_stats": {
+        "mean": -6.600001811981201,
+        "std": 0.5223850607872009,
+        "min": -7.4000091552734375,
+        "max": -5.399996280670166
+      }
+    }
+  ]
+}
