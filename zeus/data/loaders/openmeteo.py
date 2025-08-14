@@ -60,27 +60,13 @@ class OpenMeteoLoader:
             bt.logging.info(f"Expected final shape: {(sample.predict_hours, *sample.x_grid.shape[:2])}")
             
             # Oblicz godzinę początkową w dniu
-            start_hour = start_time.hour
+            # API już zwraca dane dla dokładnego przedziału czasowego - używaj wszystkich
+            sliced_data = raw_data[:sample.predict_hours]
+            bt.logging.success(f"Successfully sliced data to shape: {sliced_data.shape}")
             
-            # Wytnij tylko potrzebne godziny
-            if raw_data.shape[0] >= start_hour + sample.predict_hours:
-                # Mamy wystarczająco danych - wytnij potrzebny zakres
-                sliced_data = raw_data[start_hour:start_hour + sample.predict_hours]
-                bt.logging.success(f"Successfully sliced data to shape: {sliced_data.shape}")
-            else:
-                bt.logging.warning(f"Not enough data: have {raw_data.shape[0]} hours, need {start_hour + sample.predict_hours}")
-                # Użyj tyle ile mamy, ewentualnie wypełnij zerami
-                available_hours = min(sample.predict_hours, raw_data.shape[0] - start_hour)
-                if available_hours > 0:
-                    sliced_data = raw_data[start_hour:start_hour + available_hours]
-                    # Dopełnij zerami jeśli trzeba
-                    if available_hours < sample.predict_hours:
-                        padding_shape = (sample.predict_hours - available_hours, *sliced_data.shape[1:])
-                        padding = np.zeros(padding_shape)
-                        sliced_data = np.concatenate([sliced_data, padding], axis=0)
-                else:
-                    # Fallback - użyj pierwszych dostępnych godzin
-                    sliced_data = raw_data[:sample.predict_hours]
+            # Sprawdź czy mamy wystarczająco danych
+            if sliced_data.shape[0] < sample.predict_hours:
+                bt.logging.warning(f"⚠️  API returned only {sliced_data.shape[0]} hours, expected {sample.predict_hours}")
             
             # Reshape do oczekiwanego formatu gridu
             try:

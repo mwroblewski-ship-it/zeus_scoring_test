@@ -35,6 +35,7 @@ from zeus.validator.miner_data import MinerData
 from zeus.utils.logging import maybe_reset_wandb
 from zeus.base.validator import BaseValidatorNeuron
 from zeus.validator.constants import FORWARD_DELAY_SECONDS, REWARD_IMPROVEMENT_MIN_DELTA
+from zeus.validator.enhanced_validator import EnhancedERA5Validator
 
 
 def log_detailed_comparison(sample: Era5Sample, baseline_data: Optional[torch.Tensor], miners_data: List[MinerData]):
@@ -383,7 +384,6 @@ def parse_miner_inputs(
         miners_data=miners_data
     )
 
-
 def complete_challenge(
     self,
     sample: Era5Sample,
@@ -392,11 +392,68 @@ def complete_challenge(
     predictions: List[torch.Tensor],
 ) -> Optional[List[MinerData]]:
     """
-    Complete a challenge by reward all miners. Based on hotkeys to also work for delayed rewarding.
-    Note that non-responding miners (which get a penalty) have already been excluded.
+    Complete a challenge by reward all miners. 
+    ENHANCED VERSION - uses real ERA5 data when possible
     """
     
-    # Pobierz ground truth z ERA5
+    # 🆕 NOWE: Spróbuj Enhanced Validation
+    try:
+        bt.logging.info("🚀 Attempting Enhanced Validation with real ERA5 data...")
+        
+        # Utwórz enhanced validator
+        enhanced_validator = EnhancedERA5Validator()
+        
+        # Parse miner inputs
+        miners_data = []
+        lookup = {axon.hotkey: uid for uid, axon in enumerate(self.metagraph.axons)}
+        
+        for hotkey, prediction in zip(hotkeys, predictions):
+            uid = lookup.get(hotkey, None)
+            if uid is not None:
+                miner_data = MinerData(uid=uid, hotkey=hotkey, prediction=prediction)
+                miners_data.append(miner_data)
+        
+        # Uruchom enhanced validation
+        validation_results = enhanced_validator.enhanced_validation(
+            sample, miners_data, baseline
+        )
+        
+        # Zapisz raport
+        enhanced_validator.save_validation_report(
+            sample, validation_results, miners_data, baseline
+        )
+        
+        # Jeśli udało się pobrać ground truth z ERA5, użyj go
+        if validation_results["ground_truth_available"]:
+            ground_truth = enhanced_validator.get_era5_ground_truth(sample)
+            if ground_truth is not None:
+                sample.output_data = ground_truth
+                bt.logging.success("✅ Using real ERA5 data for final scoring!")
+        
+        # Kontynuuj z normalnym scoringiem
+        miners_data = set_penalties(sample.output_data, miners_data)
+        miners_data = set_rewards(
+            output_data=sample.output_data,
+            miners_data=miners_data,
+            baseline_data=baseline,
+            difficulty_grid=self.difficulty_loader.get_difficulty_grid(sample),
+            min_sota_delta=REWARD_IMPROVEMENT_MIN_DELTA[sample.variable]
+        )
+        
+        self.update_scores(
+            [miner.reward for miner in miners_data],
+            [miner.uid for miner in miners_data],
+        )
+        
+        bt.logging.success(f"🏆 Enhanced scoring completed for UIDs: {[miner.uid for miner in miners_data]}")
+        do_wandb_logging(self, sample, miners_data, baseline)
+        return miners_data
+        
+    except Exception as e:
+        bt.logging.warning(f"⚠️ Enhanced validation failed: {e}")
+        bt.logging.info("🔄 Falling back to standard validation...")
+    
+    # FALLBACK: Standardowa walidacja (oryginalny kod)
     bt.logging.info(f"🌍 Fetching ERA5 ground truth for stored challenge...")
     era5_ground_truth = self.cds_loader.get_output(sample)
     
@@ -404,12 +461,10 @@ def complete_challenge(
         bt.logging.warning(f"❌ ERA5 ground truth not yet available for challenge")
         return None
     
-    # Ustaw ground truth
     sample.output_data = era5_ground_truth
     
     miners_data = parse_miner_inputs(self, sample, hotkeys, predictions)
     
-    # 🔥 NOWE: Szczegółowe logowanie z prawdziwym ground truth z ERA5
     bt.logging.info("🎯 ERA5 GROUND TRUTH NOW AVAILABLE - FINAL SCORING!")
     log_detailed_comparison(sample, baseline, miners_data)
     
@@ -427,12 +482,9 @@ def complete_challenge(
     )
     
     bt.logging.success(f"🏆 Scored stored challenges for uids: {[miner.uid for miner in miners_data]}")
-    
-    # Pokaż finalne wyniki po scoringu z ERA5
     log_final_era5_results(sample, baseline, miners_data)
-    
     do_wandb_logging(self, sample, miners_data, baseline)
-
+    return miners_data
 
 def log_final_era5_results(sample: Era5Sample, baseline: Optional[torch.Tensor], miners_data: List[MinerData]):
     """
