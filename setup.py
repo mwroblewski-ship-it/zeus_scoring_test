@@ -171,8 +171,7 @@ class CopernicusERA5WeatherFetcher:
             'format': 'netcdf',
             'variable': [
                 '2m_temperature',
-                'total_precipitation',
-                '100m_u_component_of_wind',
+                '100m_u_component_of_wind', 
                 '100m_v_component_of_wind',
             ],
             'year': [str(year) for year in years],

@@ -195,10 +195,10 @@ class ResponseDatabase:
                 variable,
             ) = challenge
 
-            bt.logging.info(f"📋 Processing challenge {i+1}/{len(challenges)} (UID: {challenge_uid})")
-            bt.logging.info(f"   Variable: {variable}")
-            bt.logging.info(f"   Time: {pd.Timestamp(start_timestamp, unit='s')} -> {pd.Timestamp(end_timestamp, unit='s')}")
-            bt.logging.info(f"   Location: lat[{lat_start:.2f}, {lat_end:.2f}], lon[{lon_start:.2f}, {lon_end:.2f}]")
+            # bt.logging.info(f"📋 Processing challenge {i+1}/{len(challenges)} (UID: {challenge_uid})")
+            # bt.logging.info(f"   Variable: {variable}")
+            # bt.logging.info(f"   Time: {pd.Timestamp(start_timestamp, unit='s')} -> {pd.Timestamp(end_timestamp, unit='s')}")
+            # bt.logging.info(f"   Location: lat[{lat_start:.2f}, {lat_end:.2f}], lon[{lon_start:.2f}, {lon_end:.2f}]")
 
             sample = Era5Sample(
                 variable=variable,
@@ -215,24 +215,42 @@ class ResponseDatabase:
             # load the correct output and set it if it is available
             bt.logging.info(f"🌍 Fetching ERA5 ground truth...")
             output = self.cds_loader.get_output(sample)
-            sample.output_data = output
 
-            if output is None or output.shape[0] != hours_to_predict:
+            if output is None:
                 days_old = (latest_available - end_timestamp) / (24 * 3600)
-                bt.logging.warning(f"❌ Cannot get ERA5 ground truth (challenge {days_old:.1f} days old)")
+                bt.logging.warning(f"❌ Cannot get ERA5 ground truth (challenge {days_old:.1f} days old) - no data returned")
                 
                 if end_timestamp < (latest_available - pd.Timedelta(days=3).total_seconds()):
                     # challenge is unscore-able, delete it
                     bt.logging.info(f"🗑️  Deleting unscorable challenge (too old)")
                     self._delete_challenge(challenge_uid)
                 continue
+
+            sample.output_data = output
+
+            if output.shape[0] != hours_to_predict:
+                days_old = (latest_available - end_timestamp) / (24 * 3600)
+                bt.logging.warning(f"❌ Cannot get ERA5 ground truth (challenge {days_old:.1f} days old) - wrong shape")
+                
+                if end_timestamp < (latest_available - pd.Timedelta(days=3).total_seconds()):
+                    # challenge is unscore-able, delete it
+                    bt.logging.info(f"🗑️  Deleting unscorable challenge (too old)")
+                    self._delete_challenge(challenge_uid)
+                continue
+
             
             bt.logging.success(f"✅ ERA5 ground truth loaded: shape {list(output.shape)}")
             
             # Pokaż statystyki ground truth
+            if output.numel() == 0:
+                bt.logging.warning(f"❌ ERA5 ground truth is empty (shape: {list(output.shape)})")
+                bt.logging.info(f"🗑️  Deleting challenge with empty ground truth")
+                self._delete_challenge(challenge_uid)
+                continue
+                
             gt_stats = {
                 "mean": output.mean().item(),
-                "std": output.std().item(),
+                "std": output.std().item(), 
                 "min": output.min().item(),
                 "max": output.max().item()
             }

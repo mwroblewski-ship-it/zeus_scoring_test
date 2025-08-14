@@ -158,6 +158,11 @@ class Miner(BaseMinerNeuron):
             bt.logging.info(f"   Received {len(responses)} location responses")
 
             # get output as grid of [time, lat, lon, variables]
+            if output.shape[0] != synapse.requested_hours:
+                bt.logging.warning(f"⚠️ API returned {output.shape[0]} hours, expected {synapse.requested_hours}")
+                # Obetnij do wymaganej liczby godzin
+                output = output[:synapse.requested_hours]
+
             output = torch.Tensor(np.stack(
                 [
                     np.stack(

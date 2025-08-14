@@ -1,0 +1,41 @@
+{
+  "timestamp": 1755173244,
+  "sample_info": {
+    "variable": "total_precipitation",
+    "start_timestamp": 1754470800.0,
+    "end_timestamp": 1754553600.0,
+    "predict_hours": 24,
+    "bbox": [
+      54.25,
+      55.0,
+      -129.25,
+      -128.75
+    ],
+    "start_time_str": "2025-08-06 09:00:00",
+    "end_time_str": "2025-08-07 08:00:00",
+    "bbox_str": "[lat_start, lat_end, lon_start, lon_end]=[54.25, 55.00, -129.25, -128.75]"
+  },
+  "validation_results": {
+    "ground_truth_available": false,
+    "baseline_vs_ground_truth_rmse": null,
+    "miners_vs_ground_truth": {},
+    "miners_vs_baseline": {},
+    "best_miner_improvement": 0.0
+  },
+  "miners_data": [
+    {
+      "uid": 117,
+      "hotkey": "5HCLPRn7zVNq8REdjy1WNofLSC6p2sPiW1or6kCRNUneGjF2",
+      "reward": null,
+      "rmse": null,
+      "shape_penalty": null,
+      "baseline_improvement": null,
+      "prediction_stats": {
+        "mean": 5.868055814062245e-05,
+        "std": 0.00017785304225981236,
+        "min": 0.0,
+        "max": 0.00139999995008111
+      }
+    }
+  ]
+}

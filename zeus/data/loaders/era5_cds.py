@@ -150,6 +150,10 @@ class Era5CDSLoader(Era5BaseLoader):
             end_time=end_time,
             variables=sample.variable
         )
+
+        if data4d.shape[0] == 0:
+            bt.logging.warning(f"❌ No data available for time range {sample.start_timestamp} -> {sample.end_timestamp}")
+            return None
         # Slice off the latitude and longitude for the output
         return data4d[..., 2:].squeeze(dim=-1)
 

@@ -20,7 +20,7 @@ WANDB_MAX_LOGS = 95_000
 # the variables miners are tested on, with their respective sampling weight
 ERA5_DATA_VARS: Dict[str, float] = {
     "2m_temperature": 0.25,
-    "total_precipitation": 0.25,
+    # "total_precipitation": 0.25,
     "100m_u_component_of_wind": 0.25,
     "100m_v_component_of_wind": 0.25,
 }
