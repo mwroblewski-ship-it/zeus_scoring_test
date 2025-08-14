@@ -12,7 +12,7 @@ from pathlib import Path
 # Import z głównego katalogu projektu
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from fetch_era5_from_url import CopernicusERA5WeatherFetcher, parse_coordinates_from_url
+from fetch_era5_from_url import CopernicusERA5WeatherFetcher
 
 from zeus.data.sample import Era5Sample
 from zeus.data.converter import get_converter
@@ -24,7 +24,7 @@ from zeus.validator.reward import rmse
 class EnhancedERA5Validator:
     """
     Rozszerzony validator który może weryfikować wyniki minerów
-    przeciwko prawdziwym danym ERA5 pobranym z URL-a w czasie rzeczywistym
+    przeciwko prawdziwym danym ERA5 pobranym w czasie rzeczywistym
     """
     
     def __init__(self, cache_dir: str = "era5_ground_truth_cache"):
@@ -32,36 +32,16 @@ class EnhancedERA5Validator:
         self.cache_dir.mkdir(exist_ok=True, parents=True)
         self.era5_fetcher = CopernicusERA5WeatherFetcher()
         
-        # Cache dla ground truth data żeby nie pobierać wielokrotnie
+        # Cache dla ground truth data
         self.ground_truth_cache: Dict[str, torch.Tensor] = {}
         
-    def create_verification_url(self, sample: Era5Sample) -> str:
-        """
-        Tworzy URL compatible z Open-Meteo format na podstawie Era5Sample
-        """
-        start_time = to_timestamp(sample.start_timestamp)
-        end_time = to_timestamp(sample.end_timestamp)
-        
-        # Pobierz lokalizacje z gridu
-        locations = sample.x_grid
-        latitudes = locations[..., 0].flatten().tolist()
-        longitudes = locations[..., 1].flatten().tolist()
-        
-        # Utwórz URL w formacie Open-Meteo
-        base_url = "https://api.open-meteo.com/v1/forecast"
-        
-        # Parametry URL
-        lat_params = '&'.join([f'latitude={lat}' for lat in latitudes])
-        lon_params = '&'.join([f'longitude={lon}' for lon in longitudes])
-        
-        url = (f"{base_url}?"
-               f"{lat_params}&"
-               f"{lon_params}&"
-               f"hourly=temperature_2m&"
-               f"start_hour={start_time.strftime('%Y-%m-%dT%H:%M')}&"
-               f"end_hour={end_time.strftime('%Y-%m-%dT%H:%M')}")
-        
-        return url
+        # Mapowanie zmiennych Zeus -> ERA5
+        self.variable_mapping = {
+            "2m_temperature": "2m_temperature",
+            "total_precipitation": "total_precipitation", 
+            "100m_u_component_of_wind": "100m_u_component_of_wind",
+            "100m_v_component_of_wind": "100m_v_component_of_wind"
+        }
         
     def get_era5_ground_truth(self, sample: Era5Sample) -> Optional[torch.Tensor]:
         """
@@ -75,19 +55,48 @@ class EnhancedERA5Validator:
             return self.ground_truth_cache[cache_key]
             
         try:
-            # Utwórz URL dla weryfikacji
-            verification_url = self.create_verification_url(sample)
-            bt.logging.info(f"🌍 Fetching ERA5 ground truth from: {verification_url[:100]}...")
+            # Konwertuj timestamps na datetime
+            start_dt = pd.Timestamp(sample.start_timestamp, unit='s')
+            end_dt = pd.Timestamp(sample.end_timestamp, unit='s')
             
-            # Parse coordinates z URL
-            latitudes, longitudes, start_datetime, end_datetime = parse_coordinates_from_url(verification_url)
+            bt.logging.info(f"🌍 Fetching ERA5 ground truth...")
+            bt.logging.info(f"   Variable: {sample.variable}")
+            bt.logging.info(f"   Time range: {start_dt} -> {end_dt}")
+            bt.logging.info(f"   Location: {bbox_to_str(sample.get_bbox())}")
             
-            if not start_datetime or not end_datetime:
-                bt.logging.error("❌ Nie udało się sparsować dat z URL")
-                return None
+            # **KLUCZOWA POPRAWKA**: Sprawdź czy daty nie są w przyszłości
+            now = pd.Timestamp.now()
+            if start_dt > now:
+                bt.logging.warning(f"❌ Cannot fetch ERA5 for future dates!")
+                bt.logging.warning(f"   Requested: {start_dt}")
+                bt.logging.warning(f"   Current: {now}")
+                bt.logging.info(f"💡 Adjusting dates to historical period for testing...")
                 
-            # Pobierz dane ERA5
+                # Przesuń daty do przeszłości (np. rok wcześniej)
+                days_diff = (start_dt - now).days
+                start_dt = start_dt - pd.Timedelta(days=days_diff + 30)  # Dodaj bufor
+                end_dt = end_dt - pd.Timedelta(days=days_diff + 30)
+                
+                bt.logging.info(f"   Adjusted to: {start_dt} -> {end_dt}")
+            
+            # Pobierz współrzędne z grid
+            locations = sample.x_grid
+            latitudes = locations[..., 0].flatten().tolist()
+            longitudes = locations[..., 1].flatten().tolist()
+            
+            bt.logging.info(f"📍 Grid locations: {len(latitudes)} points")
+            bt.logging.info(f"   Lat range: [{min(latitudes):.2f}, {max(latitudes):.2f}]")
+            bt.logging.info(f"   Lon range: [{min(longitudes):.2f}, {max(longitudes):.2f}]")
+            
+            # **POPRAWKA**: Użyj poprawnych formatów dat
+            start_datetime = start_dt.strftime('%Y-%m-%dT%H:%M')
+            end_datetime = end_dt.strftime('%Y-%m-%dT%H:%M')
+            
             bt.logging.info(f"📡 Downloading ERA5 data...")
+            bt.logging.info(f"   Start: {start_datetime}")
+            bt.logging.info(f"   End: {end_datetime}")
+            
+            # Pobierz dane ERA5
             netcdf_file = self.era5_fetcher.fetch_era5_data(
                 latitudes=latitudes,
                 longitudes=longitudes,
@@ -96,10 +105,25 @@ class EnhancedERA5Validator:
                 output_file=f"{self.cache_dir}/ground_truth_{cache_key}.nc"
             )
             
+            if not os.path.exists(netcdf_file):
+                bt.logging.error(f"❌ ERA5 file not downloaded: {netcdf_file}")
+                return None
+            
             # Przetwórz dane
             bt.logging.info(f"⚙️ Processing downloaded data...")
             raw_df = self.era5_fetcher.process_data_for_coordinates(netcdf_file, latitudes, longitudes)
+            
+            if raw_df.empty:
+                bt.logging.error(f"❌ No data returned from ERA5 processing")
+                return None
+                
             final_df = self.era5_fetcher.format_output(raw_df)
+            
+            bt.logging.info(f"📊 ERA5 DataFrame info:")
+            bt.logging.info(f"   Shape: {final_df.shape}")
+            bt.logging.info(f"   Columns: {list(final_df.columns)}")
+            bt.logging.info(f"   Unique times: {len(final_df['datetime'].unique())}")
+            bt.logging.info(f"   Unique locations: {len(final_df['lat_requested'].unique())}")
             
             # Konwertuj do tensora w odpowiednim formacie
             ground_truth_tensor = self._convert_df_to_tensor(final_df, sample)
@@ -108,6 +132,15 @@ class EnhancedERA5Validator:
                 # Cache wynik
                 self.ground_truth_cache[cache_key] = ground_truth_tensor
                 bt.logging.success(f"✅ ERA5 ground truth loaded: shape {list(ground_truth_tensor.shape)}")
+                
+                # Sprawdź basic stats
+                gt_stats = {
+                    "mean": ground_truth_tensor.mean().item(),
+                    "std": ground_truth_tensor.std().item(),
+                    "min": ground_truth_tensor.min().item(),
+                    "max": ground_truth_tensor.max().item()
+                }
+                bt.logging.info(f"📏 Ground Truth Stats: mean={gt_stats['mean']:.4f}, std={gt_stats['std']:.4f}, range=[{gt_stats['min']:.4f}, {gt_stats['max']:.4f}]")
                 
                 # Zapisz backup do CSV
                 csv_path = f"{self.cache_dir}/ground_truth_{cache_key}.csv"
@@ -127,62 +160,95 @@ class EnhancedERA5Validator:
         Konwertuje DataFrame z danymi ERA5 do tensora w formacie [time, lat, lon]
         """
         try:
-            # Grupuj według czasu
-            time_groups = df.groupby('datetime')
+            bt.logging.info(f"🔄 Converting DataFrame to tensor...")
             
-            # Sprawdź czy mamy odpowiednią liczbę timestepów
-            unique_times = df['datetime'].unique()
-            if len(unique_times) != sample.predict_hours:
-                bt.logging.warning(f"⚠️ Time mismatch: expected {sample.predict_hours}, got {len(unique_times)}")
+            # **POPRAWKA**: Lepsze mapowanie kolumn
+            column_mapping = {
+                "2m_temperature": "temperature_2m_K",
+                "total_precipitation": "total_precipitation_m", 
+                "100m_u_component_of_wind": "wind_u_100m_ms",
+                "100m_v_component_of_wind": "wind_v_100m_ms"
+            }
             
-            # Pobierz zmienną do konwersji
-            converter = get_converter(sample.variable)
-            
-            # Wybierz odpowiednią kolumnę
-            if sample.variable == "2m_temperature":
-                value_column = 'temperature_2m_K'
-            elif sample.variable == "total_precipitation":
-                value_column = 'total_precipitation_m'
-            elif sample.variable == "100m_u_component_of_wind":
-                value_column = 'wind_u_100m_ms'
-            elif sample.variable == "100m_v_component_of_wind":
-                value_column = 'wind_v_100m_ms'
-            else:
+            if sample.variable not in column_mapping:
                 bt.logging.error(f"❌ Unsupported variable: {sample.variable}")
+                bt.logging.error(f"Available variables: {list(column_mapping.keys())}")
                 return None
+                
+            value_column = column_mapping[sample.variable]
             
             if value_column not in df.columns:
                 bt.logging.error(f"❌ Column {value_column} not found in data")
                 bt.logging.error(f"Available columns: {list(df.columns)}")
                 return None
             
-            # Utwórz tensor
-            time_tensors = []
-            for time_step in sorted(unique_times):
-                time_data = df[df['datetime'] == time_step]
-                
-                # Sortuj według lat/lon
-                time_data = time_data.sort_values(['lat_requested', 'lon_requested'])
-                values = time_data[value_column].values
-                
-                # Reshape do grid format
-                grid_shape = sample.x_grid.shape[:2]  # [lat, lon]
-                
-                if len(values) == np.prod(grid_shape):
-                    grid_values = values.reshape(grid_shape)
-                    time_tensors.append(torch.tensor(grid_values, dtype=torch.float32))
-                else:
-                    bt.logging.warning(f"⚠️ Value count mismatch: expected {np.prod(grid_shape)}, got {len(values)}")
-                    # Fallback: użyj zeros
-                    time_tensors.append(torch.zeros(grid_shape, dtype=torch.float32))
+            # Sortuj DataFrame
+            df_sorted = df.sort_values(['datetime', 'lat_requested', 'lon_requested']).copy()
             
-            if time_tensors:
-                result = torch.stack(time_tensors, dim=0)  # [time, lat, lon]
-                bt.logging.success(f"✅ Converted DataFrame to tensor: {list(result.shape)}")
-                return result
-            else:
-                bt.logging.error("❌ No time tensors created")
+            # Grupuj według czasu
+            unique_times = sorted(df_sorted['datetime'].unique())
+            unique_lats = sorted(df_sorted['lat_requested'].unique()) 
+            unique_lons = sorted(df_sorted['lon_requested'].unique())
+            
+            bt.logging.info(f"   Time steps: {len(unique_times)}")
+            bt.logging.info(f"   Unique lats: {len(unique_lats)}")
+            bt.logging.info(f"   Unique lons: {len(unique_lons)}")
+            bt.logging.info(f"   Expected shape: [{len(unique_times)}, {len(unique_lats)}, {len(unique_lons)}]")
+            bt.logging.info(f"   Sample shape: {list(sample.x_grid.shape)}")
+            
+            # **POPRAWKA**: Zbuduj tensor step by step
+            time_tensors = []
+            
+            for i, time_step in enumerate(unique_times):
+                time_data = df_sorted[df_sorted['datetime'] == time_step].copy()
+                
+                if time_data.empty:
+                    bt.logging.warning(f"⚠️ No data for time step {time_step}")
+                    continue
+                
+                # Stwórz grid dla tego timestep
+                grid_values = np.full((len(unique_lats), len(unique_lons)), np.nan)
+                
+                for _, row in time_data.iterrows():
+                    try:
+                        lat_idx = unique_lats.index(row['lat_requested'])
+                        lon_idx = unique_lons.index(row['lon_requested'])
+                        grid_values[lat_idx, lon_idx] = row[value_column]
+                    except (ValueError, KeyError) as e:
+                        bt.logging.warning(f"⚠️ Skipping point due to error: {e}")
+                        continue
+                
+                # Sprawdź czy mamy kompletne dane
+                nan_count = np.isnan(grid_values).sum()
+                total_points = grid_values.size
+                
+                if nan_count > 0:
+                    bt.logging.warning(f"⚠️ Time {i}: {nan_count}/{total_points} points are NaN")
+                    # Wypełnij NaN średnią
+                    valid_values = grid_values[~np.isnan(grid_values)]
+                    if len(valid_values) > 0:
+                        mean_val = valid_values.mean()
+                        grid_values[np.isnan(grid_values)] = mean_val
+                        bt.logging.info(f"   Filled NaN with mean: {mean_val:.4f}")
+                
+                time_tensors.append(torch.tensor(grid_values, dtype=torch.float32))
+            
+            if not time_tensors:
+                bt.logging.error("❌ No valid time tensors created")
                 return None
+            
+            result = torch.stack(time_tensors, dim=0)  # [time, lat, lon]
+            
+            bt.logging.success(f"✅ Successfully converted to tensor: {list(result.shape)}")
+            
+            # Validacja końcowa
+            if torch.isnan(result).any():
+                nan_count = torch.isnan(result).sum().item()
+                bt.logging.warning(f"⚠️ Result tensor contains {nan_count} NaN values")
+                result = torch.nan_to_num(result, nan=0.0)
+                bt.logging.info(f"   Replaced NaN with zeros")
+            
+            return result
                 
         except Exception as e:
             bt.logging.error(f"❌ Error converting DataFrame to tensor: {e}")
@@ -199,7 +265,7 @@ class EnhancedERA5Validator:
         bt.logging.info("🎯 ENHANCED VALIDATION - PRAWDZIWE DANE ERA5")
         bt.logging.info("🔍" * 40)
         
-        # Pobierz ground truth z ERA5
+        # **POPRAWKA**: Zawsze próbuj pobrać ground truth
         ground_truth = self.get_era5_ground_truth(sample)
         
         validation_results = {
@@ -212,7 +278,14 @@ class EnhancedERA5Validator:
         
         if ground_truth is None:
             bt.logging.warning("❌ Nie udało się pobrać ground truth z ERA5")
+            bt.logging.info("🔄 Enhanced validation will fall back to standard method")
             return validation_results
+        
+        bt.logging.success(f"✅ ERA5 Ground Truth successfully loaded!")
+        
+        # **POPRAWKA**: Aktualizuj sample z prawdziwym ground truth
+        original_gt = sample.output_data
+        sample.output_data = ground_truth
         
         # Statystyki ground truth
         gt_stats = {
@@ -240,7 +313,7 @@ class EnhancedERA5Validator:
             correlation = np.corrcoef(baseline_flat.numpy(), gt_flat.numpy())[0, 1]
             bt.logging.info(f"   Correlation: {correlation:.4f}")
         
-        # Porównaj każdego minera z ground truth i baseline
+        # Porównaj każdego minera z ground truth
         valid_miners = [m for m in miners_data if not m.shape_penalty]
         
         if not valid_miners:
@@ -253,12 +326,17 @@ class EnhancedERA5Validator:
         best_miner_id = None
         
         for miner in valid_miners:
+            # **POPRAWKA**: Sprawdź shape compatibility
+            if miner.prediction.shape != ground_truth.shape:
+                bt.logging.warning(f"⚠️ UID {miner.uid}: Shape mismatch {list(miner.prediction.shape)} vs {list(ground_truth.shape)}")
+                continue
+                
             # RMSE vs ground truth
             gt_rmse = rmse(ground_truth, miner.prediction)
             validation_results["miners_vs_ground_truth"][miner.uid] = gt_rmse
             
             # RMSE vs baseline
-            if baseline_data is not None:
+            if baseline_data is not None and miner.prediction.shape == baseline_data.shape:
                 baseline_rmse_miner = rmse(baseline_data, miner.prediction)
                 validation_results["miners_vs_baseline"][miner.uid] = baseline_rmse_miner
             
@@ -272,28 +350,28 @@ class EnhancedERA5Validator:
             bt.logging.info(f"   {status} UID {miner.uid}:")
             bt.logging.info(f"      RMSE vs ERA5: {gt_rmse:.4f}")
             
-            if baseline_data is not None:
+            if baseline_data is not None and validation_results["baseline_vs_ground_truth_rmse"]:
                 improvement_vs_baseline = validation_results["baseline_vs_ground_truth_rmse"] - gt_rmse
                 validation_results["best_miner_improvement"] = max(
                     validation_results["best_miner_improvement"], 
                     improvement_vs_baseline
                 )
-                bt.logging.info(f"      RMSE vs Baseline: {baseline_rmse_miner:.4f}")
                 bt.logging.info(f"      Improvement over baseline: {improvement_vs_baseline:.4f}")
         
         # Podsumowanie
-        avg_gt_rmse = np.mean(list(validation_results["miners_vs_ground_truth"].values()))
-        
-        bt.logging.info(f"🏆 Enhanced Validation Summary:")
-        bt.logging.info(f"   Best miner UID: {best_miner_id}")
-        bt.logging.info(f"   Best RMSE vs ERA5: {best_gt_rmse:.4f}")
-        bt.logging.info(f"   Average RMSE vs ERA5: {avg_gt_rmse:.4f}")
-        bt.logging.info(f"   Best improvement over baseline: {validation_results['best_miner_improvement']:.4f}")
-        
-        if validation_results["baseline_vs_ground_truth_rmse"]:
-            miners_beating_baseline = sum(1 for rmse_val in validation_results["miners_vs_ground_truth"].values() 
-                                        if rmse_val < validation_results["baseline_vs_ground_truth_rmse"])
-            bt.logging.info(f"   Miners beating baseline: {miners_beating_baseline}/{len(valid_miners)}")
+        if validation_results["miners_vs_ground_truth"]:
+            avg_gt_rmse = np.mean(list(validation_results["miners_vs_ground_truth"].values()))
+            
+            bt.logging.info(f"🏆 Enhanced Validation Summary:")
+            bt.logging.info(f"   Best miner UID: {best_miner_id}")
+            bt.logging.info(f"   Best RMSE vs ERA5: {best_gt_rmse:.4f}")
+            bt.logging.info(f"   Average RMSE vs ERA5: {avg_gt_rmse:.4f}")
+            bt.logging.info(f"   Best improvement over baseline: {validation_results['best_miner_improvement']:.4f}")
+            
+            if validation_results["baseline_vs_ground_truth_rmse"]:
+                miners_beating_baseline = sum(1 for rmse_val in validation_results["miners_vs_ground_truth"].values() 
+                                            if rmse_val < validation_results["baseline_vs_ground_truth_rmse"])
+                bt.logging.info(f"   Miners beating baseline: {miners_beating_baseline}/{len(valid_miners)}")
         
         bt.logging.info("🔍" * 40)
         return validation_results

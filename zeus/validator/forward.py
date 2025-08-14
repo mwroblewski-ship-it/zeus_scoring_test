@@ -396,78 +396,88 @@ def complete_challenge(
     ENHANCED VERSION - uses real ERA5 data when possible
     """
     
-    # 🆕 NOWE: Spróbuj Enhanced Validation
+    # Parse miner inputs first
+    miners_data = []
+    lookup = {axon.hotkey: uid for uid, axon in enumerate(self.metagraph.axons)}
+    
+    for hotkey, prediction in zip(hotkeys, predictions):
+        uid = lookup.get(hotkey, None)
+        if uid is not None:
+            miner_data = MinerData(uid=uid, hotkey=hotkey, prediction=prediction)
+            miners_data.append(miner_data)
+    
+    if not miners_data:
+        bt.logging.warning("❌ No valid miners found for challenge")
+        return None
+    
+    bt.logging.info(f"⛏️ Processing challenge for {len(miners_data)} miners")
+    
+    # 🆕 NOWE: Spróbuj Enhanced Validation NAJPIERW
+    enhanced_success = False
     try:
         bt.logging.info("🚀 Attempting Enhanced Validation with real ERA5 data...")
         
         # Utwórz enhanced validator
         enhanced_validator = EnhancedERA5Validator()
         
-        # Parse miner inputs
-        miners_data = []
-        lookup = {axon.hotkey: uid for uid, axon in enumerate(self.metagraph.axons)}
-        
-        for hotkey, prediction in zip(hotkeys, predictions):
-            uid = lookup.get(hotkey, None)
-            if uid is not None:
-                miner_data = MinerData(uid=uid, hotkey=hotkey, prediction=prediction)
-                miners_data.append(miner_data)
-        
-        # Uruchom enhanced validation
+        # Uruchom enhanced validation - to także ustawi sample.output_data jeśli się uda
         validation_results = enhanced_validator.enhanced_validation(
             sample, miners_data, baseline
         )
         
-        # Zapisz raport
-        enhanced_validator.save_validation_report(
-            sample, validation_results, miners_data, baseline
-        )
-        
-        # Jeśli udało się pobrać ground truth z ERA5, użyj go
+        # Sprawdź czy udało się pobrać ground truth
         if validation_results["ground_truth_available"]:
-            ground_truth = enhanced_validator.get_era5_ground_truth(sample)
-            if ground_truth is not None:
-                sample.output_data = ground_truth
-                bt.logging.success("✅ Using real ERA5 data for final scoring!")
-        
-        # Kontynuuj z normalnym scoringiem
-        miners_data = set_penalties(sample.output_data, miners_data)
-        miners_data = set_rewards(
-            output_data=sample.output_data,
-            miners_data=miners_data,
-            baseline_data=baseline,
-            difficulty_grid=self.difficulty_loader.get_difficulty_grid(sample),
-            min_sota_delta=REWARD_IMPROVEMENT_MIN_DELTA[sample.variable]
-        )
-        
-        self.update_scores(
-            [miner.reward for miner in miners_data],
-            [miner.uid for miner in miners_data],
-        )
-        
-        bt.logging.success(f"🏆 Enhanced scoring completed for UIDs: {[miner.uid for miner in miners_data]}")
-        do_wandb_logging(self, sample, miners_data, baseline)
-        return miners_data
-        
+            bt.logging.success("✅ Enhanced validation successful - using real ERA5 ground truth!")
+            enhanced_success = True
+            
+            # Zapisz raport
+            enhanced_validator.save_validation_report(
+                sample, validation_results, miners_data, baseline
+            )
+        else:
+            bt.logging.warning("⚠️ Enhanced validation failed to get ERA5 data")
+            
     except Exception as e:
         bt.logging.warning(f"⚠️ Enhanced validation failed: {e}")
-        bt.logging.info("🔄 Falling back to standard validation...")
+        bt.logging.debug(f"Error details: {traceback.format_exc()}")
     
-    # FALLBACK: Standardowa walidacja (oryginalny kod)
-    bt.logging.info(f"🌍 Fetching ERA5 ground truth for stored challenge...")
-    era5_ground_truth = self.cds_loader.get_output(sample)
+    # 🔄 FALLBACK: Standardowa walidacja jeśli enhanced nie zadziałała
+    if not enhanced_success:
+        bt.logging.info("🔄 Falling back to standard ERA5 CDS validation...")
+        
+        # Spróbuj pobrać dane z CDS loader (oryginalny sposób)
+        era5_ground_truth = self.cds_loader.get_output(sample)
+        
+        if era5_ground_truth is None:
+            bt.logging.warning(f"❌ ERA5 ground truth not yet available from CDS loader")
+            bt.logging.warning(f"   Challenge may be too recent or CDS data not ready")
+            
+            # Ostatnia deska ratunku - użyj baseline jako ground truth z ostrzeżeniem
+            if baseline is not None:
+                bt.logging.warning(f"⚠️ FALLBACK: Using OpenMeteo baseline as ground truth for scoring")
+                bt.logging.warning(f"   This is not ideal but allows scoring to proceed")
+                sample.output_data = baseline
+            else:
+                bt.logging.error(f"❌ No ground truth available - cannot score challenge")
+                return None
+        else:
+            bt.logging.success(f"✅ Standard ERA5 ground truth loaded from CDS")
+            sample.output_data = era5_ground_truth
     
-    if era5_ground_truth is None:
-        bt.logging.warning(f"❌ ERA5 ground truth not yet available for challenge")
+    # W tym momencie sample.output_data powinno być ustawione
+    if sample.output_data is None:
+        bt.logging.error(f"❌ No ground truth data available for scoring")
         return None
     
-    sample.output_data = era5_ground_truth
+    bt.logging.info(f"🎯 FINAL SCORING with ground truth shape: {list(sample.output_data.shape)}")
     
-    miners_data = parse_miner_inputs(self, sample, hotkeys, predictions)
+    # Standardowy proces scoringu
+    miners_data = set_penalties(sample.output_data, miners_data)
     
-    bt.logging.info("🎯 ERA5 GROUND TRUTH NOW AVAILABLE - FINAL SCORING!")
+    # Loguj szczegółowe porównanie
     log_detailed_comparison(sample, baseline, miners_data)
     
+    # Ustaw rewards
     miners_data = set_rewards(
         output_data=sample.output_data, 
         miners_data=miners_data, 
@@ -476,12 +486,17 @@ def complete_challenge(
         min_sota_delta=REWARD_IMPROVEMENT_MIN_DELTA[sample.variable]
     )
 
+    # Aktualizuj scores
     self.update_scores(
         [miner.reward for miner in miners_data],
         [miner.uid for miner in miners_data],
     )
     
-    bt.logging.success(f"🏆 Scored stored challenges for uids: {[miner.uid for miner in miners_data]}")
+    # Pokaż finalne wyniki
+    ground_truth_source = "Enhanced ERA5" if enhanced_success else "Standard CDS" if sample.output_data is not baseline else "OpenMeteo Baseline"
+    bt.logging.success(f"🏆 Scoring completed using {ground_truth_source} ground truth")
+    bt.logging.success(f"   Scored UIDs: {[miner.uid for miner in miners_data]}")
+    
     log_final_era5_results(sample, baseline, miners_data)
     do_wandb_logging(self, sample, miners_data, baseline)
     return miners_data

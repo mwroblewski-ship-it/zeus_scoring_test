@@ -87,10 +87,10 @@ class Miner(BaseMinerNeuron):
     async def forward(self, synapse: TimePredictionSynapse) -> TimePredictionSynapse:
         """
         Processes the incoming TimePredictionSynapse for a prediction.
-
+    
         Args:
             synapse (TimePredictionSynapse): The synapse object containing the time range and coordinates
-
+    
         Returns:
             TimePredictionSynapse: The synapse object with the 'predictions' field set".
         """
@@ -122,7 +122,7 @@ class Miner(BaseMinerNeuron):
                 bt.logging.info(f"   Top-right: ({coordinates[0, -1, 0]:.2f}, {coordinates[0, -1, 1]:.2f})")
                 bt.logging.info(f"   Bottom-left: ({coordinates[-1, 0, 0]:.2f}, {coordinates[-1, 0, 1]:.2f})")
                 bt.logging.info(f"   Bottom-right: ({coordinates[-1, -1, 0]:.2f}, {coordinates[-1, -1, 1]:.2f})")
-
+    
         ##########################################################################################################
         # TODO (miner) you likely want to improve over this baseline of calling OpenMeteo by changing this section
         
@@ -148,6 +148,9 @@ class Miner(BaseMinerNeuron):
         # 🔥 NOWE: Loguj szczegóły API request
         self._log_api_request("https://api.open-meteo.com/v1/forecast", params)
         
+        # Initialize output variable BEFORE try block
+        output = None
+        
         try:
             responses = self.openmeteo_api.weather_api(
                 "https://api.open-meteo.com/v1/forecast", params=params, method="POST"
@@ -156,13 +159,8 @@ class Miner(BaseMinerNeuron):
             api_duration = time.time() - start_api_time
             bt.logging.success(f"✅ OpenMeteo API responded in {api_duration:.2f}s")
             bt.logging.info(f"   Received {len(responses)} location responses")
-
-            # get output as grid of [time, lat, lon, variables]
-            if output.shape[0] != synapse.requested_hours:
-                bt.logging.warning(f"⚠️ API returned {output.shape[0]} hours, expected {synapse.requested_hours}")
-                # Obetnij do wymaganej liczby godzin
-                output = output[:synapse.requested_hours]
-
+    
+            # **POPRAWKA**: Przenieś definicję output tutaj, PRZED sprawdzaniem shape
             output = torch.Tensor(np.stack(
                 [
                     np.stack(
@@ -176,8 +174,16 @@ class Miner(BaseMinerNeuron):
                 ],
                 axis=1
             )).reshape(synapse.requested_hours, *coordinates.shape[:2], -1)
+            
             # [time, lat, lon] in case of single variable output
             output = output.squeeze(dim=-1)
+            
+            # **TERAZ** możemy sprawdzić shape
+            if output.shape[0] != synapse.requested_hours:
+                bt.logging.warning(f"⚠️ API returned {output.shape[0]} hours, expected {synapse.requested_hours}")
+                # Obetnij do wymaganej liczby godzin
+                output = output[:synapse.requested_hours]
+    
             # Convert variable(s) to ERA5 units, combines variables for windspeed
             output = converter.om_to_era5(output)
             
@@ -241,16 +247,22 @@ class Miner(BaseMinerNeuron):
                 output = torch.zeros(fallback_shape)
             
             bt.logging.warning(f"⚠️  Using fallback prediction: shape {list(output.shape)}, value {output[0,0,0].item():.4f}")
-
+    
         ##########################################################################################################
+        
+        # **POPRAWKA**: Sprawdź czy output jest prawidłowo zdefiniowany
+        if output is None:
+            bt.logging.error(f"❌ Critical error: output is None after processing")
+            fallback_shape = (synapse.requested_hours, *coordinates.shape[:2])
+            output = torch.zeros(fallback_shape)
+            bt.logging.warning(f"⚠️  Using emergency fallback: shape {list(output.shape)}")
         
         bt.logging.info(f"📤 Sending response with shape: {list(output.shape)}")
         bt.logging.info("📥" * 20)
-
+    
         synapse.predictions = output.tolist()
         synapse.version = zeus_version
         return synapse
-    
 
     async def blacklist(self, synapse: TimePredictionSynapse) -> typing.Tuple[bool, str]:
         return await self._blacklist(synapse)
